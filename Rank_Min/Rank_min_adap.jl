@@ -33,8 +33,13 @@ h = NuclearNorm(β_h);
 x₀ = b;
 y₀ = prox(ProximalAlgorithms.convex_conjugate(h),(1+σ)*L*b)[1];
 
-solver = ProximalAlgorithms.AFBA(theta = θ, mu = μ, tol = Float64(1e-6), maxit=1000);
-(x_afba, y_afba), it, iter = solver(x0 = x₀, y0 = y₀, f=f, beta_f=β_f, g=g_mod, h=h, L=L, gamma=(τ,σ), out=true);
+# With Adaptive AFBA
+solver = ProximalAlgorithms.AAFBA(theta = θ, mu = μ, tol = Float64(1e-6), maxit=20000);
+(x_afba, y_afba), it, iter = solver(x0 = x₀, y0 = y₀, f=f, beta_f=β_f, g=g_mod, h=h, L=L, gamma=τ, t=sqrt(σ/τ), out=true);
+
+# For Comparison with Original AFBA
+# solver = ProximalAlgorithms.AFBA(theta = θ, mu = μ, tol = Float64(1e-6), maxit=1000);
+# (x_afba, y_afba), it, iter = solver(x0 = x₀, y0 = y₀, f=f, beta_f=β_f, g=g_mod, h=h, L=L, gamma=(τ,σ), out=true);
 
 #Plot Results
 using Plots
@@ -44,6 +49,19 @@ plot!(iter.g_list,label="Cost g(x)",lw=2)
 plot!(iter.h_list,label="Cost h(Lx)",lw=2)
 xlabel!("Iteration"); ylabel!("Cost(x,Lx)")
 (iter.f_list+iter.g_list+iter.h_list)[end]
+
+
+plot(iter.step_list,label="γ",lw=2, legendfont=10,legend=40)
+ylabel!("Stepsize (γ)"); xlabel!("Iteration")
+
+scatter((1:it)[iter.step_min.==3],iter.step_min[iter.step_min.==3],label="3. Curvature Limit")
+scatter!((1:it)[iter.step_min.==2],iter.step_min[iter.step_min.==2],label="2. Estimated Opnorm Limit")
+scatter!((1:it)[iter.step_min.==1],iter.step_min[iter.step_min.==1],label="1. Stepsize Increase",legendfont=10)
+ylabel!("Criteria for Stepsize Update"); xlabel!("Iteration")
+
+plot(iter.eta_list,label="ηₖ",lw=2)
+ylabel!("Opnorm Estimate (η)"); xlabel!("Iteration")
+
 
 rank(A,1e-3)
 rank(L*x_afba,1e-3)
