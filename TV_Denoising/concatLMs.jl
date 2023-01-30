@@ -46,6 +46,20 @@ function Base.:(*)(α::Real, L::ConcatLM, l::AbstractVector)
     return y
 end
 
+function Base.:(*)(V::AbstractVector, L::ConcatLM, l::AbstractVector)
+    y = zeros(size(L.A)[1],2)
+    temp = V.*l
+    mul!(y,L,temp)
+    return y
+end
+
+function Base.:(*)(A::AbstractMatrix, L::ConcatLM, l::AbstractVector)
+    y = zeros(size(L.A)[1],2)
+    temp = A*l
+    mul!(y,L,temp)
+    return y
+end
+
 opnorm(::ConcatLM) = sqrt(8);
 
 struct AdjointConcatLM
@@ -82,6 +96,20 @@ function Base.:(*)(α::Real, T::AdjointConcatLM, d::AbstractMatrix)
     y = zeros(size(T.L.A)[2])
     mul!(y,T,d)
     y *= α
+    return y
+end
+
+function Base.:(*)(V::AbstractVector, T::AdjointConcatLM, d::AbstractMatrix)
+    y = zeros(size(T.L.A)[2])
+    mul!(y,T,d)
+    y .*= V
+    return y
+end
+
+function Base.:(*)(A::AbstractMatrix, T::AdjointConcatLM, d::AbstractMatrix)
+    y = zeros(size(T.L.A)[2])
+    mul!(y,T,d)
+    y *= A
     return y
 end
 

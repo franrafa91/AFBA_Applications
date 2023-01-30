@@ -22,9 +22,49 @@
 
 using Base.Iterators
 using ProximalAlgorithms.IterationTools
+using ProximalOperators: IndBox
 using ProximalCore: Zero, IndZero, convex_conjugate
 using LinearAlgebra
 using Printf
+
+function costs(iter::IteratorType, state::StateType) where {IteratorType, StateType}
+    if !iter.dual
+        if iter.xout
+            append!(iter.f_list,iter.f(state.x))
+            if (typeof(iter.g)<:IndBox)
+                g_ext = IndBox(iter.g.lb.-1e-10,iter.g.ub.+1e-10)
+                append!(iter.g_list,g_ext(state.x))
+            else
+                append!(iter.g_list,iter.g(state.x))
+            end
+            mul!(state.temp_y, iter.L, state.x)
+            append!(iter.h_list,iter.h(state.temp_y))
+        elseif iter.yout
+            mul!(state.temp_x, iter.L', state.y)
+            append!(iter.f_list,iter.f(state.temp_x))
+            append!(iter.g_list,iter.g(state.temp_x))
+            append!(iter.h_list,iter.h(state.y))
+        end
+    else
+        if iter.xout
+            append!(iter.f_list,convex_conjugate(iter.l)(state.y))
+            if (typeof(Conjugate(iter.h))<:IndBox)
+                hc_ext = IndBox(Conjugate(iter.h).lb.-1e-10,Conjugate(iter.h).ub.+1e-10)
+                append!(iter.g_list,hc_ext(state.y))
+            else
+                append!(iter.g_list,Conjugate(iter.h)(state.y))
+            end
+            mul!(state.temp_x, iter.L', state.y)
+            append!(iter.h_list,Conjugate(iter.g)(state.temp_x))
+        end
+        if iter.yout
+            mul!(state.temp_y, iter.L, state.x)
+            append!(iter.f_list,convex_conjugate(iter.l)(state.x))
+            append!(iter.g_list,Conjugate(iter.h)(state.x))
+            append!(iter.h_list,Conjugate(iter.g)(state.temp_y))
+        end
+    end
+end
 
 """
     AFBAIteration(; <keyword-arguments>)
@@ -104,12 +144,14 @@ Base.@kwdef struct AFBAIteration{R,Tx,Ty,Tf,Tg,Th,Tl,TL,Tbetaf,Tbetal,Ttheta,Tmu
         T = real(eltype(x0))
         AFBA_default_stepsizes(L, h, T(theta), T(mu), T(beta_f), T(beta_l))
     end
+    dual::Bool = false
     xout::Bool = false
-    out::Bool = false
+    yout::Bool = false
     f_list::Vector{R} = []
     g_list::Vector{R} = []
     h_list::Vector{R} = []
-    x_list::Vector{R} = []
+    p_list::Vector{R} = []
+    d_list::Vector{R} = []
 end
 
 Base.IteratorSize(::Type{<:AFBAIteration}) = Base.IsInfinite()
@@ -164,7 +206,9 @@ Base.@kwdef struct AFBAState{Tx,Ty}
     xbar::Tx = similar(x)
     ybar::Ty = similar(y)
     gradf::Tx = similar(x)
+    gradf_new::Tx = similar(x)
     gradl::Ty = similar(y)
+    gradl_new::Ty = similar(y)
     FPR_x::Tx = similar(x)
     FPR_y::Ty = similar(y)
     temp_x::Tx = similar(x)
@@ -172,29 +216,27 @@ Base.@kwdef struct AFBAState{Tx,Ty}
 end
 
 function Base.iterate(iter::AFBAIteration, state::AFBAState = AFBAState(x=copy(iter.x0), y=copy(iter.y0)))
-    if iter.out
-        if state.x == iter.x0
-            if iter.xout append!(iter.x_list,state.x) end
-            append!(iter.f_list,iter.f(state.x))
-            append!(iter.g_list,iter.g(state.x))
-            mul!(state.temp_y, iter.L, state.x)
-            append!(iter.h_list,iter.h(state.temp_y))
-        end
+    if state.x == iter.x0
+        costs(iter,state)
+        if (iter.lambda == 1) gradient!(state.gradf_new,iter.f,state.x) end
+        if (iter.lambda == 1) gradient!(state.gradl_new,convex_conjugate(iter.l), state.y) end
     end
     # perform xbar-update step
-    gradient!(state.gradf, iter.f, state.x)
+    if (iter.lambda == 1) state.gradf .= state.gradf_new else 
+    gradient!(state.gradf, iter.f, state.x) end
     mul!(state.temp_x, iter.L', state.y)
     state.temp_x .+= state.gradf
-    state.temp_x .*= -iter.gamma[1]
+    state.temp_x .= -state.temp_x.*iter.gamma[1]
     state.temp_x .+= state.x
     prox!(state.xbar, iter.g, state.temp_x, iter.gamma[1])
 
     # perform ybar-update step
-    gradient!(state.gradl, convex_conjugate(iter.l), state.y)
+    if (iter.lambda == 1) state.gradl .= state.gradl_new else 
+    gradient!(state.gradl, convex_conjugate(iter.l), state.y) end
     state.temp_x .= iter.theta .* state.xbar .+ (1 - iter.theta) .* state.x
     mul!(state.temp_y, iter.L, state.temp_x)
     state.temp_y .-= state.gradl
-    state.temp_y .*= iter.gamma[2]
+    state.temp_y .= state.temp_y.*iter.gamma[2]
     state.temp_y .+= state.y
     prox!(state.ybar, convex_conjugate(iter.h), state.temp_y, iter.gamma[2])
 
@@ -202,24 +244,35 @@ function Base.iterate(iter::AFBAIteration, state::AFBAState = AFBAState(x=copy(i
     state.FPR_x .= state.xbar .- state.x
     state.FPR_y .= state.ybar .- state.y
 
+    # Primal Inclusion
+    gradient!(state.gradf_new, iter.f, state.xbar)
+    mul!(state.temp_x, iter.L', state.FPR_y) #FPR_y = -(uₙ-ūₙ)
+    state.temp_x .-= state.FPR_x./iter.gamma[1] #FPR_x = -(xₙ-x̄ₙ)
+    state.temp_x .-= state.gradf
+    state.temp_x .+= state.gradf_new
+    append!(iter.p_list,norm(state.temp_x))
+
+    # Dual Inclusion
+    gradient!(state.gradl_new, convex_conjugate(iter.l), state.ybar)
+    mul!(state.temp_y, iter.L, state.FPR_x) #FPR_y = -(uₙ-ūₙ)
+    state.temp_y .*= -(1-iter.theta)
+    state.temp_y .-= state.FPR_y./iter.gamma[2] #FPR_x = -(xₙ-x̄ₙ)
+    state.temp_y .-= state.gradl
+    state.temp_y .+= state.gradl_new
+    append!(iter.d_list,norm(state.temp_y))
+
     # perform x-update step
-    state.temp_y .= (iter.mu * (2 - iter.theta) * iter.gamma[1]) .* state.FPR_y
+    state.temp_y .= (iter.mu * (2 - iter.theta)) .* state.FPR_y
     mul!(state.temp_x, iter.L', state.temp_y)
-    state.x .+= iter.lambda .* (state.FPR_x .- state.temp_x)
+    state.x .+= iter.lambda * iter.gamma[1] .* (state.FPR_x .- state.temp_x)
 
     # perform y-update step
-    state.temp_x .= ((1 - iter.mu) * (2 - iter.theta) * iter.gamma[2]) .* state.FPR_x
+    state.temp_x .= ((1 - iter.mu) * (2 - iter.theta)) .* state.FPR_x
     mul!(state.temp_y, iter.L, state.temp_x)
-    state.y .+= iter.lambda .* (state.FPR_y .+ state.temp_y)
+    state.y .+= iter.lambda * iter.gamma[2].* (state.FPR_y .+ state.temp_y)
 
-    if iter.out
-        if (iter.xout) append!(iter.x_list,state.x) end
-        append!(iter.f_list,iter.f(state.x))
-        append!(iter.g_list,iter.g(state.x))
-        mul!(state.temp_y, iter.L, state.x)
-        append!(iter.h_list,iter.h(state.temp_y))
-    end
-return state, state
+    costs(iter,state)
+    return state, state
 end
 
 default_stopping_criterion(tol, ::AFBAIteration, state::AFBAState) = norm(state.FPR_x, Inf) + norm(state.FPR_y, Inf) <= tol

@@ -1,6 +1,5 @@
 ###DEFINE INDBALL THAT WILL RETURN PROX PER ROW
 export IndBallL2_row
-using ProximalAlgorithms
 import ProximalCore: prox!, convex_conjugate
 
 
@@ -20,7 +19,15 @@ is_positively_homogeneous(f::Type{<:NormL2_row}) = true
 
 NormL2_row(lambda::R=1) where R = NormL2_row{R}(lambda)
 
-## Maybe develop the L2 norm row by row eventually
+function (f::NormL2_row)(x)
+    s1, s2 = size(x)
+    y = zeros(eltype(x),s1)
+    for i in 1:s2
+        y .+= x[:,i].^2
+    end
+    y = sqrt.(y)
+    return λ*sum(y)
+end
 
 convex_conjugate(f::NormL2_row) = IndBallL2_row(f.lambda)
 
@@ -55,7 +62,7 @@ function (f::IndBallL2_row)(x)
             y[i] = Inf
         end
     end
-    return y
+    return sum(y)
 end
 
 function prox!(y, f::IndBallL2_row, x, gamma)

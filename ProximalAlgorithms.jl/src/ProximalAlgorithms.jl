@@ -1,6 +1,7 @@
 module ProximalAlgorithms
 
 using ProximalCore
+using ProximalOperators
 using ProximalCore: prox, prox!, gradient, gradient!
 
 const RealOrComplex{R} = Union{R,Complex{R}}
@@ -78,7 +79,7 @@ function (alg::IterativeAlgorithm{IteratorType})(; kwargs...) where IteratorType
     for (k, state) in enumerate(iter)
         if k >= alg.maxit || alg.stop(iter, state)
             alg.verbose && alg.display(k, iter, state)
-            print("I'm here at iteration ",k,".\n")
+            print("Algorithm Finished at Iteration ",k,".\n")
             return (alg.solution(iter, state), k, iter)
         end
         alg.verbose && mod(k, alg.freq) == 0 && alg.display(k, iter, state)
@@ -99,7 +100,8 @@ include("algorithms/li_lin.jl")
 include("algorithms/sfista.jl")
 include("algorithms/panocplus.jl")
 include("algorithms/AAFBA.jl")
-include("algorithms/LAFBA.jl")
-include("algorithms/MAFBA.jl")
+include("algorithms/GPDAL.jl")
+include("algorithms/GRPDA.jl")
+include("algorithms/EGRPDA.jl")
 
 end # module
